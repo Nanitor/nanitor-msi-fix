@@ -1,0 +1,46 @@
+project_name: nanitor-msi-fix
+
+release:
+  github:
+    owner: nanitor
+    name: nanitor-msi-fix
+before:
+  hooks:
+    - go mod download
+builds:
+- binary: nanitor-msi-fix
+  goos:
+  - windows
+  goarch:
+  - arm64
+  - amd64
+  - 386
+  env:
+  - CGO_ENABLED=0
+  - GO111MODULE=on
+  main: ./main.go
+archives:
+  - id: default
+    format: tar.gz
+    wrap_in_directory: true
+    format_overrides:
+    - goos: windows
+      format: zip
+    name_template: '{{ .Binary }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+    files:
+    - README.md
+dist: bin
+snapshot:
+  name_template: SNAPSHOT-{{ .Commit }}
+checksum:
+  name_template: '{{ .ProjectName }}-{{ .Version }}-checksums.txt'
+changelog:
+  sort: asc
+  filters:
+    exclude:
+    - '^docs:'
+    - '^test:'
+    - '^dev:'
+    - 'README'
+    - Merge pull request
+    - Merge branch
