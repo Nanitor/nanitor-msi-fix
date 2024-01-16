@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"golang.org/x/sys/windows/registry"
@@ -10,23 +11,18 @@ import (
 
 const lookForNormal = `C:\Program Files\Nanitor\Nanitor Agent\nssm.exe`
 const lookForOther = `C:\Program Files (x86)\Nanitor\Nanitor Agent\nssm.exe`
+const regInstallFolder = `SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\Folders`
+const regInstallProduct = `SOFTWARE\classes\installer\products`
 
-const regPath = `SOFTWARE\Classes\Installer\Products`
-
-// regEntriesToClean lists possible registry keys under HKEY_CLASSES_ROOT\Installer\Products for previous Nanitor
-// installations that might be interfering with the installation.
-var regEntriesToClean = []string{
-	`BBE9FCC2D1F201D4B8CA64DF69F93571`,
-	`467C5BBFB3579BB419A8462DD9C60F47`,
-	`7C26439BE1E9C1C4F8F2CA131CD58559`,
-	`3A4836739F5FF934C9FEFB4B51CC4731`,
-	`4CCDAA5DB9EF1E0499A94A0A2044F4B8`,
-	`259B3D0E1047167499E9170C5AAB9FD1`,
-	`7F22E1E791607F74A8C5660D21D76744`,
+var regFixedEntries = []string{
+	`Software\Nanitor`,
+	`system\controlset001\services\nanitor agent`,
+	`system\currentcontrolset\services\nanitor agent`,
 }
 
-func getRegFullPath(regEntry string) string {
-	return regPath + `\` + regEntry
+var dataFolders = []string{
+	`C:\Program Files\Nanitor`,
+	`C:\ProgramData\Nanitor`,
 }
 
 func checkNanitorInstalled() bool {
@@ -43,116 +39,97 @@ func checkNanitorInstalled() bool {
 	return false
 }
 
+func delOsFolder() {
+	for _, folderName := range dataFolders {
+		if _, err := os.Stat(folderName); !os.IsNotExist(err) {
+			osErr := os.RemoveAll(folderName)
+			if osErr == nil {
+				fmt.Println("Successfully removed", folderName)
+			} else {
+				fmt.Println("Failed to remove", folderName, osErr)
+			}
+		}
+		fmt.Println(folderName, "does not exists")
+	}
+}
+
+func delRegKey(regEntry string) {
+	regKey := `HKLM\` + regEntry
+	fmt.Printf("About to delete key: %s \n", regKey)
+	cmdObj := exec.Command("reg", "delete", regKey, "/f")
+	out, err := cmdObj.CombinedOutput()
+	if err != nil {
+		fmt.Println("problem with command:", err)
+	}
+	fmt.Println(string(out))
+}
+
 func main() {
 	if checkNanitorInstalled() {
 		fmt.Printf("Nanitor is already installed, not needing to do any cleanup\n")
 		os.Exit(0)
 	}
-
-	var regFixedEntries = []string{
-		`Software\Nanitor`,
-		`system\controlset001\services\nanitor agent`,
-		`system\currentcontrolset\services\nanitor agent`,
-		}
-	var regInstallFolder = `SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\Folders`
-	var regInstallProduct = `SOFTWARE\classes\installer\products`
+	delOsFolder()
 	for _, regEntry := range regFixedEntries {
 		k, err := registry.OpenKey(registry.LOCAL_MACHINE, regEntry, registry.QUERY_VALUE)
 		if err != nil {
-			fmt.Printf("Reg path not found: %s - err(%v)\n", regEntry, err)
-			//continue
-		}	else {
-			fmt.Printf("Reg path found: %s \n", regEntry)
+			fmt.Printf("Reg path not found: HKLM\\%s - err(%v)\n", regEntry, err)
+		} else {
+			fmt.Printf("Reg path found: HKLM\\%s \n", regEntry)
+			delRegKey(regEntry)
 		}
 		k.Close()
 	}
-	keyInstallFolder, err := registry.OpenKey(registry.LOCAL_MACHINE, regInstallFolder, registry.QUERY_VALUE)
+
+	keyInstallFolder, err := registry.OpenKey(registry.LOCAL_MACHINE, regInstallFolder, registry.ALL_ACCESS)
 	if err != nil {
-		fmt.Printf("Reg path not found: %s - err(%v)\n", regInstallFolder, err)
-	}	else {
-		fmt.Printf("Reg path found: %s \n", regInstallFolder)
-		InstallFolderValues, _ := keyInstallFolder.ReadValueNames(-1)
-		keyInstallFolder.Close()
-		for _, FolderName := range InstallFolderValues{
-			if strings.Contains(FolderName,"Nanitor"){
-				fmt.Println(FolderName)
-				}
+		fmt.Printf("Reg path not found: HKLM\\%s - err(%v)\n", regInstallFolder, err)
+	} else {
+		//fmt.Printf("Reg path found: HKLM\\%s \n", regInstallFolder)
+		InstallFolderValues, err := keyInstallFolder.ReadValueNames(-1)
+		if err != nil {
+			fmt.Printf("Value Names not found: HKLM\\%s - err(%v)\n", regInstallFolder, err)
 		}
+		var FolderCount int = 0
+		for _, FolderName := range InstallFolderValues {
+			if strings.Contains(FolderName, "Nanitor") {
+				FolderCount++
+				//fmt.Println(FolderName)
+				err = keyInstallFolder.DeleteValue(FolderName)
+				if err != nil {
+					fmt.Printf("Failed to delete folder value %s - err(%v)\n", FolderName, err)
+				} else {
+					fmt.Printf("Successfully deleted folder value %s\n", FolderName)
+				}
+			}
+		}
+		fmt.Printf("Found %v Nanitor Folders.\n", FolderCount)
+		keyInstallFolder.Close()
 	}
 
-	KeyInstallProd, err := registry.OpenKey(registry.LOCAL_MACHINE, regInstallProduct, registry.QUERY_VALUE | registry.ENUMERATE_SUB_KEYS)
+	KeyInstallProd, err := registry.OpenKey(registry.LOCAL_MACHINE, regInstallProduct, registry.ALL_ACCESS)
 	if err != nil {
-		fmt.Printf("Reg path not found: %s - err(%v)\n", regInstallProduct, err)
-	}	else {
-		fmt.Printf("Reg path found: %s \n", regInstallProduct)
-		InstallProdKeys, _ := KeyInstallProd.ReadSubKeyNames(-1)
+		fmt.Printf("Reg path not found: HKLM\\%s - err(%v)\n", regInstallProduct, err)
+	} else {
+		//fmt.Printf("Reg path found: HKLM\\%s \n", regInstallProduct)
+		InstallProdKeys, err := KeyInstallProd.ReadSubKeyNames(-1)
+		if err != nil {
+			fmt.Printf("Subkeys not found: HKLM\\%s - err(%v)\n", regInstallProduct, err)
+		}
 		KeyInstallProd.Close()
-		for _, keyProdID := range InstallProdKeys{
+		for _, keyProdID := range InstallProdKeys {
 			regSubKey := regInstallProduct + `\` + keyProdID
-			KeySubProd, err := registry.OpenKey(registry.LOCAL_MACHINE, regSubKey, registry.QUERY_VALUE | registry.ENUMERATE_SUB_KEYS)
+			KeySubProd, err := registry.OpenKey(registry.LOCAL_MACHINE, regSubKey, registry.QUERY_VALUE|registry.ENUMERATE_SUB_KEYS)
 			if err != nil {
-				fmt.Printf("Reg path not found: %s - err(%v)\n", regInstallProduct, err)
+				fmt.Printf("Reg path not found: HKLM\\%s - err(%v)\n", regSubKey, err)
 				continue
 			}
-			ProdNameStr,_,_ := KeySubProd.GetStringValue("ProductName")
-			if strings.Contains(ProdNameStr,"Nanitor"){
-				fmt.Printf("Deleting %s - %s",keyProdID,ProdNameStr)
-				err = registry.DeleteKey(registry.LOCAL_MACHINE, regSubKey)
-				if err != nil {
-					fmt.Printf("Failed to delete key: %s - err(%v)\n", regSubKey, err)
-					continue
-				}
+			ProdNameStr, _, _ := KeySubProd.GetStringValue("ProductName")
+
+			if strings.Contains(ProdNameStr, "Nanitor") {
+				delRegKey(regSubKey)
 			}
 			KeySubProd.Close()
 		}
 	}
-}
-
-func old(){
-
-	for _, regEntry := range regEntriesToClean {
-		regPathFull := getRegFullPath(regEntry)
-		if len(regPathFull) < 10 {
-			fmt.Printf("Invalid regPathFull\n")
-			continue
-		}
-
-		k, err := registry.OpenKey(registry.LOCAL_MACHINE, regPathFull, registry.QUERY_VALUE)
-		if err != nil {
-			fmt.Printf("Reg path not found: %s - err(%v)\n", regPathFull, err)
-			continue
-		}
-		k.Close()
-
-		curDelete := regPathFull + `\SourceList\Media`
-		err = registry.DeleteKey(registry.LOCAL_MACHINE, curDelete)
-		if err != nil {
-			fmt.Printf("Failed to delete key: %s - err(%v)\n", curDelete, err)
-			continue
-		}
-
-		curDelete = regPathFull + `\SourceList\Net`
-		err = registry.DeleteKey(registry.LOCAL_MACHINE, curDelete)
-		if err != nil {
-			fmt.Printf("Failed to delete key: %s - err(%v)\n", curDelete, err)
-			continue
-		}
-
-		curDelete = regPathFull + `\SourceList`
-		err = registry.DeleteKey(registry.LOCAL_MACHINE, curDelete)
-		if err != nil {
-			fmt.Printf("Failed to delete key: %s - err(%v)\n", curDelete, err)
-			continue
-		}
-
-		curDelete = regPathFull
-		err = registry.DeleteKey(registry.LOCAL_MACHINE, curDelete)
-		if err != nil {
-			fmt.Printf("Failed to delete key: %s - err(%v)\n", curDelete, err)
-			continue
-		}
-
-		fmt.Printf("Key cleaned: %s\n", regPathFull)
-	}
-
 }
