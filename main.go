@@ -48,8 +48,9 @@ func delOsFolder() {
 			} else {
 				fmt.Println("Failed to remove", folderName, osErr)
 			}
+		} else {
+			fmt.Println(folderName, "does not exists")
 		}
-		fmt.Println(folderName, "does not exists")
 	}
 }
 
