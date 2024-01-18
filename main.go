@@ -86,7 +86,6 @@ func main() {
 	if err != nil {
 		fmt.Printf("Reg path not found: HKLM\\%s - err(%v)\n", regInstallFolder, err)
 	} else {
-		//fmt.Printf("Reg path found: HKLM\\%s \n", regInstallFolder)
 		InstallFolderValues, err := keyInstallFolder.ReadValueNames(-1)
 		if err != nil {
 			fmt.Printf("Value Names not found: HKLM\\%s - err(%v)\n", regInstallFolder, err)
@@ -95,7 +94,6 @@ func main() {
 		for _, FolderName := range InstallFolderValues {
 			if strings.Contains(FolderName, "Nanitor") {
 				FolderCount++
-				//fmt.Println(FolderName)
 				err = keyInstallFolder.DeleteValue(FolderName)
 				if err != nil {
 					fmt.Printf("Failed to delete folder value %s - err(%v)\n", FolderName, err)
@@ -112,12 +110,12 @@ func main() {
 	if err != nil {
 		fmt.Printf("Reg path not found: HKLM\\%s - err(%v)\n", regInstallProduct, err)
 	} else {
-		//fmt.Printf("Reg path found: HKLM\\%s \n", regInstallProduct)
 		InstallProdKeys, err := KeyInstallProd.ReadSubKeyNames(-1)
 		if err != nil {
 			fmt.Printf("Subkeys not found: HKLM\\%s - err(%v)\n", regInstallProduct, err)
 		}
 		KeyInstallProd.Close()
+		FoundProd := false
 		for _, keyProdID := range InstallProdKeys {
 			regSubKey := regInstallProduct + `\` + keyProdID
 			KeySubProd, err := registry.OpenKey(registry.LOCAL_MACHINE, regSubKey, registry.QUERY_VALUE|registry.ENUMERATE_SUB_KEYS)
@@ -129,8 +127,12 @@ func main() {
 
 			if strings.Contains(ProdNameStr, "Nanitor") {
 				delRegKey(regSubKey)
+				FoundProd = true
 			}
 			KeySubProd.Close()
+		}
+		if !FoundProd {
+			fmt.Println("Nanitor not found in", regInstallProduct)
 		}
 	}
 }
